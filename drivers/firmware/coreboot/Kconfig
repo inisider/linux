@@ -1,0 +1,15 @@
+menuconfig COREBOOT_TABLES
+	bool "Coreboot tables"
+	default n
+	help
+	  These drivers are used to export coreboot tables to sysfs
+
+if COREBOOT_TABLES
+
+config COREBOOT_SYSFS
+	tristate "Coreboot sysfs driver"
+	default n
+	help
+	  This driver create coreboot node in /sys/firmware
+
+endif # COREBOOT_TABLES

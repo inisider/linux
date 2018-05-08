@@ -10,6 +10,13 @@ config COREBOOT_SYSFS
 	tristate "Coreboot sysfs driver"
 	default n
 	help
-	  This driver create coreboot node in /sys/firmware
+	  This driver creates coreboot node in /sys/firmware
+
+config COREBOOT_IRQ
+	tristate "Coreboot irq table"	
+	default n
+	depends on COREBOOT_SYSFS && GOOGLE_COREBOOT_TABLE
+	help
+	  This driver creates coreboot node /sys/firmware/coreboot/irq
 
 endif # COREBOOT_TABLES

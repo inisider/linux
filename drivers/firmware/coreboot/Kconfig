@@ -10,6 +10,14 @@ config COREBOOT_SYSFS
 	tristate "Coreboot sysfs driver"
 	default n
 	help
-	  This driver create coreboot node in /sys/firmware
+	  This driver creates coreboot node in /sys/firmware
+
+config COREBOOT_TIMESTAMPS
+	tristate "Coreboot timestamps table"
+	default n
+	depends on GOOGLE_COREBOOT_TABLE
+	help
+	  This driver exportes coreboot timestamps table
+	  to /sys/firmware/coreboot/timestamps
 
 endif # COREBOOT_TABLES

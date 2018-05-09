@@ -4,8 +4,9 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 
-// TODO: rework this ?? how ??
-#include <../drivers/firmware/google/coreboot_table.h>
+#include "../google/coreboot_table.h"
+
+#define COREBOOT_IRQ_TABLE_ID (0x49525154)
 
 extern struct kobject *cb_kobj;
 
@@ -26,10 +27,21 @@ static struct bin_attribute irq_tbl_bin_attr = {
 static int __init cb_irq_tbl_init(void)
 {
 	int ret;
+	struct lb_cbmem_entry entry;
 
 	pr_debug("cb_irq_tbl_init()\n");
 
-	
+	entry.id = COREBOOT_IRQ_TABLE_ID;
+	ret = coreboot_table_find(LB_TAG_CBMEM_ENTRY, &entry, sizeof(entry));
+	if (ret) {
+		pr_err("coreboot IRQ table was not found\n");
+		return ret;
+	}
+
+	pr_info("tag: 0x%x, size: 0x%x, cbmem_addr: 0x%llx\n",
+		entry.tag,
+		entry.entry_size,
+		entry.address);
 
 	ret = sysfs_create_bin_file(cb_kobj, &irq_tbl_bin_attr);
 	if (ret) {

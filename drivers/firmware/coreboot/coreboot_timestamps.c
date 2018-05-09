@@ -7,13 +7,18 @@
 
 #include "timestamp.h"
 
-// TODO: rework this ?? how ??
-#include <../drivers/firmware/google/coreboot_table.h>
+#include "../google/coreboot_table.h"
 
 #define CB_TAG_TIMESTAMPS   0x0016
 
+struct ts_entry {
+	uint32_t id;
+	uint64_t stamp;
+	uint64_t prev_stamp;
+	char *name;
+}
+
 extern struct kobject *cb_kobj;
-static struct timestamp_table *ts_tbl;
 static unsigned long tick_freq_mhz;
 
 static char *ts_tbl_buf;
@@ -77,15 +82,16 @@ static int ts_set_tick_freq(unsigned long table_tick_freq_mhz)
 	return ret;
 }
 
-static int cb_ts_tbl_map(phys_addr_t physaddr)
+static struct timestamp_table* cb_ts_tbl_map(phys_addr_t physaddr)
 {
+	struct timestamp_table *ts_tbl;
 	size_t size;
 
 	size = sizeof(*ts_tbl);
 	ts_tbl = memremap(physaddr, size, MEMREMAP_WB);
 	if (!ts_tbl) {
 		pr_err("(1) timestamp table could not be mapped\n");
-		return -ENOMEM;
+		return ts_tbl;
 	}
 
 	pr_debug("number of entries in coreboot timestamp table: %d\n", ts_tbl->num_entries);
@@ -96,7 +102,7 @@ static int cb_ts_tbl_map(phys_addr_t physaddr)
 
 	if (!ts_set_tick_freq(ts_tbl->tick_freq_mhz)) {
 		memunmap(ts_tbl);
-		return -EINVAL;
+		return NULL;
 	}
 
 	memunmap(ts_tbl);
@@ -104,10 +110,10 @@ static int cb_ts_tbl_map(phys_addr_t physaddr)
 	ts_tbl = memremap(physaddr, size, MEMREMAP_WB);
 	if (!ts_tbl) {
 		pr_err("(2) timestamp table could not be mapped\n");
-		return -ENOMEM;
+		return ts_tbl;
 	}
 
-	return 0;
+	return ts_tbl;
 }
 
 uint64_t convert_raw_ts_entry(uint64_t ts)
@@ -132,8 +138,10 @@ static void write_to_ts_tbl_buf(const char *fmt, ...)
 	va_list args;
 	uint32_t curr_ts_tbl_buf_size = PARSED_TS_TBL_SIZE - curr_ts_tbl_buf_indx;
 
-	if (!curr_ts_tbl_buf_size)
+	if (!curr_ts_tbl_buf_size) {
 		pr_warn("too small buffer for timestamp table\n");
+		return;
+	}
 
 	va_start(args, fmt);
 	curr_ts_tbl_buf_indx += vsnprintf(ts_tbl_buf + curr_ts_tbl_buf_indx,
@@ -143,30 +151,26 @@ static void write_to_ts_tbl_buf(const char *fmt, ...)
 	va_end(args);
 }
 
-static uint64_t ts_get_entry(uint32_t id, uint64_t stamp, uint64_t prev_stamp)
+static uint64_t ts_get_entry(struct ts_entry *ts_entry,
+			uint32_t id, uint64_t stamp, uint64_t prev_stamp)
 {
-	const char *name;
-	uint64_t step_time;
-
-	name = ts_name(id);
-
-	step_time = convert_raw_ts_entry(stamp - prev_stamp);
+	ts_entry->name = ts_name(id);
+	ts_entry->step_time = convert_raw_ts_entry(stamp - prev_stamp);
+	ts_entry->stamp = convert_raw_ts_entry(stamp);
+	ts_entry->id = id;
 
 	/* ID<tab>absolute time<tab>relative time<tab>description */
-	pr_debug("%d\t", id);
-	pr_debug("%llu\t", convert_raw_ts_entry(stamp));
-	pr_debug("%llu\t", step_time);
-	pr_debug("%s\n", name);
+	pr_debug("%d\t", ts_entry->id);
+	pr_debug("%llu\t", ts_entry->stamp);
+	pr_debug("%llu\t", ts_entry->step_time);
+	pr_debug("%s\n", ts_entry->name);
 
-	write_to_ts_tbl_buf("%d\t%llu\t\t%llu\t\t%s\n",
-			id, convert_raw_ts_entry(stamp),
-			step_time, name);
-
-	return step_time;
+	return ts_entry->step_time;
 }
 
-void parse_ts_table(void)
+void parse_ts_table(struct timestamp_table *ts_tbl)
 {
+	struct ts_entry ts_entry;
 	uint64_t prev_stamp = 0;
 	uint64_t total_time = 0;
 	int i;
@@ -175,7 +179,13 @@ void parse_ts_table(void)
 			"ID", "Absolute time", "Relative time", "Description");
 
 	/* Report the base time within the table. */
-	ts_get_entry(0,  ts_tbl->base_time, prev_stamp);
+	ts_get_entry(&ts_entry, 0,  ts_tbl->base_time, prev_stamp);
+
+	write_to_ts_tbl_buf("%d\t%llu\t\t%llu\t\t%s\n",
+			ts_entry->id, ts_entry->stamp,
+			ts_entry->step_time, ts_etnry->name);
+
+	prev_stamp = ts_tbl->base_time;
 
 	for (i = 0; i < ts_tbl->num_entries; i++) {
 		uint64_t stamp;
@@ -183,7 +193,13 @@ void parse_ts_table(void)
 
 		/* Make all timestamps absolute. */
 		stamp = tse->entry_stamp + ts_tbl->base_time;
-		total_time += ts_get_entry(tse->entry_id, stamp, prev_stamp);
+		total_time += ts_get_entry(&ts_entry,
+					tse->entry_id, stamp, prev_stamp);
+
+		write_to_ts_tbl_buf("%d\t%llu\t\t%llu\t\t%s\n",
+			ts_entry->id, ts_entry->stamp,
+			ts_entry->step_time, ts_etnry->name);
+
 		prev_stamp = stamp;
 	}
 }
@@ -192,6 +208,7 @@ static int __init cb_ts_tbl_init(void)
 {
 	int ret;
 	struct lb_cbmem_ref entry;
+	struct timestamp_table *ts_tbl;
 
 	pr_debug("cb_ts_tbl_init()\n");
 
@@ -206,21 +223,20 @@ static int __init cb_ts_tbl_init(void)
 		entry.size,
 		entry.cbmem_addr);
 
-	ret = cb_ts_tbl_map(entry.cbmem_addr);
-	if (ret) {
+	ts_tbl = cb_ts_tbl_map(entry.cbmem_addr);
+	if (!ts_tbl) {
 		pr_err("coreboot timestamp table was not mapped\n");
-		return ret;
+		return -ENOMEM;
 	}
 
 	ts_tbl_buf = kzalloc(PARSED_TS_TBL_SIZE, GFP_KERNEL);
 	if (!ts_tbl_buf) {
 		pr_err("memory for parsed timestamp table was not allocated\n");
-		memunmap(ts_tbl);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto cb_ts_tbl_init_err;
 	}
 
-	curr_ts_tbl_buf_indx = 0;
-	parse_ts_table();
+	parse_ts_table(ts_tbl);
 
 	memunmap(ts_tbl);
 
@@ -228,9 +244,17 @@ static int __init cb_ts_tbl_init(void)
 	if (ret) {
 		pr_err("sysfs_create_bin_file() failed for for file: %s\n",
 			ts_tbl_bin_attr.attr.name);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto cb_ts_tbl_init_err;
 	}
 
+	return ret;
+
+cb_ts_tbl_init_err:
+	if (ts_tbl)
+		memunmap(ts_tbl);
+	if (ts_tbl_buf)
+		memunmap(ts_tbl_buf);
 	return ret;
 }
 

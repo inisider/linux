@@ -15,7 +15,7 @@ config COREBOOT_SYSFS
 config COREBOOT_TIMESTAMPS
 	tristate "Coreboot timestamps table"
 	default n
-	depends on GOOGLE_COREBOOT_TABLE
+	depends on COREBOOT_SYSFS && GOOGLE_COREBOOT_TABLE
 	help
 	  This driver exportes coreboot timestamps table
 	  to /sys/firmware/coreboot/timestamps

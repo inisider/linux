@@ -61,6 +61,16 @@ int coreboot_table_find(int tag, void *data, size_t data_size)
 			if (data_size < entry.size)
 				return -EINVAL;
 
+			if (tag == LB_TAG_CBMEM_ENTRY) {
+				struct lb_cbmem_entry *cbmem_entry = ptr_entry;
+				struct lb_cbmem_entry *get_id = data;
+
+				if (cbmem_entry->id != get_id->id) {
+					ptr_entry += entry.size;
+					continue;
+				}
+			}
+
 			memcpy_fromio(data, ptr_entry, entry.size);
 
 			return 0;

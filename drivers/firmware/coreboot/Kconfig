@@ -12,4 +12,11 @@ config COREBOOT_SYSFS
 	help
 	  This driver create coreboot node in /sys/firmware
 
+config COREBOOT_MEMORY
+	tristate "Coreboot nemory table table"
+	default n
+	depends on COREBOOT_SYSFS && GOOGLE_COREBOOT_TABLE
+	help
+		This driver creates coreboot node /sys/firmware/coreboot/memory
+
 endif # COREBOOT_TABLES

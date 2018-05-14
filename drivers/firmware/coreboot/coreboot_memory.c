@@ -8,6 +8,7 @@
 
 #define LB_TAG_MEMORY           (0x0001)
 #define MAX_NUM_ENTRIES		(0x10)
+#define MEM_TABLE_BUF_SIZE	(1024)
 
 struct lb_uint64 {
         uint32_t lo;
@@ -50,13 +51,15 @@ struct lb_mem {
 } __packed;
 
 extern struct kobject *cb_kobj;
+static char mem_table_buf[MEM_TABLE_BUF_SIZE] = {0}; // maybe as static variable it will be 0 by default??
+static u32 mem_table_indx;
 
 static ssize_t mem_tbl_read(struct file *filp, struct kobject *kobp,
 			       struct bin_attribute *bin_attr, char *buf,
 			       loff_t pos, size_t count)
 {
-	pr_info("mem_tbl_read!!!()\n");
-	return 0;
+	return memory_read_from_buffer(buf, count, &pos,
+		mem_table_buf, mem_table_indx);
 }
 
 static struct bin_attribute mem_tbl_bin_attr = {
@@ -64,16 +67,74 @@ static struct bin_attribute mem_tbl_bin_attr = {
 	.read = mem_tbl_read,
 };
 
+static int write_to_buf(const char *fmt, ...)
+{
+	u32 curr_mem_table_buf_size =
+		MEM_TABLE_BUF_SIZE - mem_table_indx;
+	va_list args;
+
+	if (!curr_mem_table_buf_size) {
+		pr_warn("too small buffer for mem table\n");
+		return -EINVAL;
+	}
+
+	va_start(args, fmt);
+	mem_table_indx += vsnprintf(mem_table_buf + mem_table_indx,
+				curr_mem_table_buf_size,
+				fmt,
+				args);
+	va_end(args);
+
+	return 0;
+}
+
 static int convert_mem_table_to_buf(struct lb_mem *entry)
 {
 	int ret;
-	uint32_t entries;
+	uint32_t entries, i;
+	const struct lb_mem_range *ranges;
+	const char *mem_type;
+	uint64_t size, start, end;
 
         entries = (entry->size - sizeof(*entry)) / sizeof(entry->map[0]);
         pr_debug("real number of entries: 0x%x\n", entries);
 
-	// TODO: implement current function
-	ret = -EINVAL;
+	if (entries == 0) {
+		pr_err("No memory ranges were found\n");
+		return -EINVAL;
+	}
+
+	ranges = entry->map;
+
+	for (i = 0; i < entries; i++) {
+		switch(ranges[i].type) {
+		case LB_MEM_RAM:
+			mem_type = "AVAIBLE";
+			break;
+		case LB_MEM_RESERVED:
+			mem_type = "RESERVED";
+			break;
+		case LB_MEM_TABLE:
+			mem_type = "CONFIG_TABLE";
+			break;
+		default:
+			mem_type = "UNKNOWN";
+			break;
+		}
+
+		size = unpack_lb64(ranges[i].size);
+		start = unpack_lb64(ranges[i].start);
+		end = start + size - 1;
+
+		ret = write_to_buf("%s memory:\n"
+                       "    from physical addresses 0x%016llu"
+                       " to 0x%016llu\n    size is 0x%016llu"
+                       " bytes (%llu in decimal)\n",
+                       mem_type, start, end, size, size);
+
+		if (ret)
+			break;
+	}
 
 	return ret;
 }
@@ -82,7 +143,6 @@ static int __init cb_mem_tbl_init(void)
 {
 	int ret;
 	struct lb_mem *entry;
-	uint32_t entries;
 	uint32_t len;
 	void *mem_table;
 

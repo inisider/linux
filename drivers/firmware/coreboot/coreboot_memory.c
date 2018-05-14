@@ -63,7 +63,7 @@ static ssize_t mem_tbl_read(struct file *filp, struct kobject *kobp,
 }
 
 static struct bin_attribute mem_tbl_bin_attr = {
-	.attr = {.name = "mem", .mode = 0444},
+	.attr = {.name = "memory", .mode = 0444},
 	.read = mem_tbl_read,
 };
 
